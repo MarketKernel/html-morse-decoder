@@ -1,0 +1,26 @@
+{
+  "name": "morse-decoder",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Morse code decoder and generator — one standalone HTML file and a PWA: spectrum, waterfall, two decoders, English and Russian",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node tests/morse.mjs && node tests/fft.mjs && node tests/receiver.mjs && node tests/settings.mjs && node tests/i18n.mjs",
+    "test:browser": "node tests/app.mjs",
+    "i18n": "node tools/i18n.mjs",
+    "shots": "node tools/shots.mjs",
+    "icons": "node tools/icons.mjs",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:browser"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "typescript": "^5.9.3"
+  }
+}

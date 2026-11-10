@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover hands the notch and the home indicator to env(safe-area-inset-*);
+     resizes-content makes Chrome on Android shrink the page, not cover it, with the keyboard. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<!-- Nothing may leave the page: no fetch, no images or fonts from elsewhere, no forms posting
+     out. The microphone is not a network request: getUserMedia is outside the policy. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Morse Decoder</title>
+<link rel="icon" href="__ICON__">
+<style>/*__STYLES__*/</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <img class="brand-logo" src="__ICON__" alt="">
+    <div>
+      <h1 class="brand-name" data-i18n="app">Morse decoder</h1>
+      <p class="brand-sub" data-i18n="app">Spectrum, two decoders and a generator — in one offline page</p>
+    </div>
+  </div>
+  <div class="topbar-controls">
+    <!-- The installed app (build/pages/) only: a new version waits for this. -->
+    <button id="update-ready" class="button button--primary" type="button" hidden></button>
+    <label class="select-field">
+      <span class="select-label" data-i18n="settings">Language</span>
+      <select id="ui-language"></select>
+    </label>
+    <label class="select-field">
+      <span class="select-label" data-i18n="settings">Theme</span>
+      <select id="theme"></select>
+    </label>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="panel receiver" aria-labelledby="receiver-title">
+    <div class="panel-head">
+      <h2 id="receiver-title" class="panel-title" data-i18n="receiver">Receiver</h2>
+      <div class="toolbar">
+        <button id="mic" class="button button--primary" type="button" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+          <span id="mic-label" data-i18n="receiver">Start microphone</span>
+        </button>
+        <label class="select-field">
+          <span class="select-label" data-i18n="receiver">Filter</span>
+          <select id="bandwidth"></select>
+        </label>
+        <label class="select-field">
+          <span class="select-label" data-i18n="receiver">Range</span>
+          <select id="span"></select>
+        </label>
+        <label class="range-field" title="How far a signal must stand above the noise to be decoded" data-i18n-attr="receiver">
+          <span class="select-label" data-i18n="receiver">Squelch</span>
+          <input id="squelch" type="range" step="1">
+          <output id="squelch-value" class="range-value"></output>
+        </label>
+      </div>
+    </div>
+
+    <div id="scope" class="scope">
+      <canvas id="spectrum" class="scope-spectrum"></canvas>
+      <canvas id="waterfall" class="scope-waterfall"></canvas>
+      <div id="markers" class="scope-markers" aria-hidden="true"></div>
+      <div id="cursor" class="scope-cursor" aria-hidden="true" hidden><span id="cursor-label" class="scope-cursor-label"></span></div>
+      <div id="scope-empty" class="scope-empty">
+        <p data-i18n="receiver">Start the microphone, or play the generator into the decoder.</p>
+      </div>
+    </div>
+
+    <div class="scope-foot">
+      <div class="segmented" role="radiogroup" aria-label="Click tunes" data-i18n-attr="receiver">
+        <span class="segmented-label" data-i18n="receiver">Click tunes</span>
+        <button class="segmented-item" type="button" role="radio" data-pick="0" aria-checked="true">A</button>
+        <button class="segmented-item" type="button" role="radio" data-pick="1" aria-checked="false">B</button>
+      </div>
+      <p class="hint" data-i18n="receiver">Click a signal to decode it. <kbd data-slot="shift">Shift</kbd>-click or right-click tunes the other decoder.</p>
+    </div>
+
+    <div id="decoders" class="decoders"></div>
+  </section>
+
+  <section class="panel generator" aria-labelledby="generator-title">
+    <div class="panel-head">
+      <div>
+        <h2 id="generator-title" class="panel-title" data-i18n="generator">Generator</h2>
+        <p class="panel-sub" data-i18n="generator">Type a text and hear it in Morse — to try the decoder.</p>
+      </div>
+    </div>
+
+    <label class="visually-hidden" for="gen-text" data-i18n="generator">Text to send</label>
+    <textarea id="gen-text" class="gen-text" rows="3" spellcheck="false" placeholder="Text in Latin or Cyrillic letters" data-i18n-attr="generator"></textarea>
+    <div id="gen-code" class="gen-code" aria-label="The text in Morse" data-i18n-attr="generator"></div>
+
+    <div class="gen-grid">
+      <label class="range-field range-field--wide">
+        <span class="select-label" data-i18n="generator">Speed</span>
+        <input id="gen-wpm" type="range" step="1">
+        <output id="gen-wpm-value" class="range-value"></output>
+      </label>
+      <label class="range-field range-field--wide">
+        <span class="select-label" data-i18n="generator">Tone, Hz</span>
+        <input id="gen-tone" class="number" type="number" step="10" inputmode="numeric">
+      </label>
+      <label class="range-field range-field--wide">
+        <span class="select-label" data-i18n="generator">Volume</span>
+        <input id="gen-volume" type="range" min="0" max="1" step="0.05">
+        <output id="gen-volume-value" class="range-value"></output>
+      </label>
+      <label class="range-field range-field--wide" title="White noise into the decoder only, to try it on weak signals" data-i18n-attr="generator">
+        <span class="select-label" data-i18n="generator">Test noise</span>
+        <input id="gen-noise" type="range" min="0" max="1" step="0.05">
+        <output id="gen-noise-value" class="range-value"></output>
+      </label>
+    </div>
+
+    <div class="gen-options">
+      <label class="check"><input id="gen-hear" type="checkbox"> <span data-i18n="generator">Play through the speakers</span></label>
+      <label class="check"><input id="gen-feed" type="checkbox"> <span data-i18n="generator">Feed straight into the decoder</span></label>
+      <label class="check"><input id="gen-loop" type="checkbox"> <span data-i18n="generator">Repeat</span></label>
+    </div>
+
+    <div class="gen-actions">
+      <button id="gen-play" class="button button--primary" type="button">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5l12 7-12 7z"/></svg>
+        <span data-i18n="generator">Play</span>
+      </button>
+      <button id="gen-stop" class="button" type="button" disabled>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>
+        <span data-i18n="generator">Stop</span>
+      </button>
+      <span id="gen-status" class="gen-status" aria-live="polite"></span>
+    </div>
+    <p class="hint" data-i18n="generator">Every Play starts one more transmission: change the tone and press Play again to hear two signals at once.</p>
+  </section>
+</main>
+
+<footer class="footer">
+  <small data-i18n="app">Version <span id="version" data-slot="version"></span></small>
+  <span id="update-dot" class="footer-dot" aria-hidden="true" hidden>·</span>
+  <span id="update" class="footer-update" hidden></span>
+  <span class="footer-dot" aria-hidden="true">·</span>
+  <span data-i18n="app">Nothing leaves this page: the sound is processed right here.</span>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<template id="decoder-template">
+  <article class="decoder">
+    <header class="decoder-head">
+      <span class="decoder-badge"></span>
+      <label class="decoder-freq">
+        <input class="decoder-freq-input number" type="number" step="1" inputmode="numeric" aria-label="Frequency, Hz" data-i18n-attr="decoder">
+        <span class="decoder-unit" data-i18n="decoder">Hz</span>
+      </label>
+      <select class="decoder-lang" aria-label="Alphabet" data-i18n-attr="decoder">
+        <option value="en" data-i18n="decoder">Latin (EN)</option>
+        <option value="ru" data-i18n="decoder">Cyrillic (RU)</option>
+      </select>
+      <span class="decoder-stats">
+        <span class="decoder-led" title="Key down" data-i18n-attr="decoder"></span>
+        <span class="decoder-wpm"></span>
+        <span class="decoder-meter" title="Signal over noise" data-i18n-attr="decoder"><span class="decoder-meter-fill"></span></span>
+        <span class="decoder-snr"></span>
+      </span>
+      <span class="decoder-actions">
+        <button class="icon-button decoder-copy" type="button" title="Copy the text" data-i18n-attr="decoder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>
+        </button>
+        <button class="icon-button decoder-clear" type="button" title="Clear the text" data-i18n-attr="decoder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+        </button>
+        <button class="icon-button decoder-off" type="button" title="Turn this decoder off" data-i18n-attr="decoder">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </span>
+    </header>
+    <div class="decoder-body">
+      <p class="decoder-text"><span class="decoder-out"></span><span class="decoder-symbol"></span></p>
+      <p class="decoder-empty"></p>
+    </div>
+  </article>
+</template>
+
+<script>/*__APP__*/</script>
+</body>
+</html>

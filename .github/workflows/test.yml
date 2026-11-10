@@ -1,0 +1,37 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      # ubuntu-latest ships Chrome at /usr/bin/google-chrome, where tools/chrome.mjs looks.
+      # The page's test, then the PWA's: offline from its worker, an update from a new deploy.
+      - run: npm run test:browser
+
+      # The single HTML file must not pull anything off the network.
+      - name: No external references in the build
+        run: |
+          if grep -oE '(src|href)="(https?:)?//[^"]*"' build/morse-decoder.html; then
+            echo "::error::external resources are left in build/morse-decoder.html"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: morse-decoder
+          path: build/morse-decoder.html
