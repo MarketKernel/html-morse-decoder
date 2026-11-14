@@ -196,6 +196,29 @@ kbd {
   font-size: 13px;
 }
 
+.audio-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.audio-source-field {
+  flex: 1 1 260px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.audio-source-field select {
+  flex: 1;
+  min-width: 0;
+  width: 0;
+  text-overflow: ellipsis;
+}
+
+.audio-help {
+  margin: 8px 0 12px;
+}
+
 /* ---------- Controls ---------- */
 
 .button {
@@ -836,8 +859,8 @@ select option {
     width: 100%;
   }
 
-  .toolbar #mic {
-    flex: 1 1 100%;
+  .audio-controls > .button {
+    flex: 1;
   }
 
   .toolbar .select-field {

@@ -1,10 +1,12 @@
 # Morse decoder
 
 A Morse code decoder and generator in **one HTML file**. Open it from the disk, allow the
-microphone, click a signal on the waterfall — and read it. Nothing is sent anywhere: the sound
+audio source, click a signal on the waterfall — and read it. Nothing is sent anywhere: the sound
 is processed in the page, which is not allowed any network access at all.
 
-- **Spectrum and waterfall** of what the microphone hears.
+- **Audio sources**: choose an available microphone, sound-card or virtual loopback input,
+  or capture a browser tab / system audio with **Audio loopback (tab / system)**.
+- **Spectrum and waterfall** of the selected audio source.
 - **Two decoders at once**: click a signal for decoder A, Shift-click (or right-click) another
   for B. A click snaps to the nearest peak.
 - **Latin and Cyrillic** Morse. The same codes mean different letters in the two alphabets;
@@ -29,7 +31,10 @@ is processed in the page, which is not allowed any network access at all.
 
 1. Open `morse-decoder.html` in Chrome, Edge, Firefox or Safari (from the disk, or from any
    https:// address — the microphone needs one of the two).
-2. **Start microphone** and allow it. Or skip the microphone: in **Generator**, leave *Feed
+2. Choose an **Audio source**, then **Start audio** and allow it. After permission is granted,
+   the list shows the available microphones and their names; **Refresh inputs** updates it.
+   For **Audio loopback (tab / system)**, select a tab or screen in the browser's picker and
+   enable **Share audio**. Or skip capture: in **Generator**, leave *Feed
    straight into the decoder* on and press **Play**.
 3. Click the signal's trace on the waterfall. Decoder A tunes to it and starts writing.
 4. For a second signal, Shift-click it (or pick **B** under the waterfall and click).
@@ -115,6 +120,13 @@ Update or closes every window of the app.
 
 ## Limitations
 
+- Tab/system capture depends on the browser and OS. Chromium browsers commonly offer tab
+  audio; system or window audio may be unavailable. If the picker has no audio option,
+  use an OS-provided monitor / Stereo Mix or a virtual cable exposed as an audio input.
+  The display picker requires a video track, but the decoder only processes audio.
+  See the [Screen Capture specification](https://www.w3.org/TR/screen-capture/).
+- Changing the audio source stops the current capture. Press **Start audio** to use the
+  new source. Unplugging a device or stopping sharing in the browser also stops capture.
 - Prosigns (`<AR>`, `<SK>` …) come out as the characters their codes share, or `*`.
 - A decoder tuned in the first moment of a very slow (5 WPM) dash may read it as a dot.
 - The microphone gets the raw signal (no echo cancelling or noise suppression), so playing the

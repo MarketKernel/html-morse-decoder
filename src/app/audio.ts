@@ -1,6 +1,6 @@
 /**
  * The sound graph. Everything the decoder hears goes into `input`: the
- * microphone when it is on, the generator when it feeds the decoder directly,
+ * selected audio input when it is on, the generator when it feeds the decoder directly,
  * the test noise. A ScriptProcessorNode hands `input` to the receiver in
  * blocks: an AudioWorklet would want its module from a URL, which the page's
  * policy (nothing loaded from anywhere) does not allow, and these blocks are
@@ -12,19 +12,21 @@
 
 const BLOCK = 2048;
 
-export type MicError = 'denied' | 'missing' | 'insecure' | 'failed';
+export type AudioInput = { kind: 'microphone'; deviceId?: string } | { kind: 'loopback' };
+export type InputError = 'denied' | 'missing' | 'insecure' | 'unsupported' | 'no-audio' | 'failed';
 
 export class AudioEngine {
   readonly ctx: AudioContext;
   /** What the decoder hears. */
   readonly input: GainNode;
   private readonly processor: ScriptProcessorNode;
-  private mic: MediaStream | null = null;
-  private micSource: MediaStreamAudioSourceNode | null = null;
+  private stream: MediaStream | null = null;
+  private source: MediaStreamAudioSourceNode | null = null;
+  private request = 0;
   private noise: AudioBufferSourceNode | null = null;
   private readonly noiseGain: GainNode;
 
-  constructor(onSamples: (samples: Float32Array) => void) {
+  constructor(onSamples: (samples: Float32Array) => void, private readonly onInputEnded: () => void = () => {}) {
     this.ctx = new AudioContext({ latencyHint: 'interactive' });
     this.input = this.ctx.createGain();
     this.processor = this.ctx.createScriptProcessor(BLOCK, 1, 1);
@@ -43,8 +45,8 @@ export class AudioEngine {
     return this.ctx.sampleRate;
   }
 
-  get micOn(): boolean {
-    return this.mic !== null;
+  get inputOn(): boolean {
+    return this.stream !== null;
   }
 
   /** After a click: a context created or left suspended by the autoplay policy starts. */
@@ -52,32 +54,65 @@ export class AudioEngine {
     if (this.ctx.state === 'suspended') await this.ctx.resume();
   }
 
-  /** The microphone into the decoder, untouched: echo cancelling and noise suppression eat tones. */
-  async startMic(): Promise<MicError | null> {
-    if (this.mic) return null;
-    if (!navigator.mediaDevices?.getUserMedia) return 'insecure';
+  /** Call directly from a click: getDisplayMedia needs transient user activation. */
+  async startInput(input: AudioInput): Promise<InputError | null> {
+    this.stopInput();
+    const request = this.request;
+    const media = navigator.mediaDevices;
+    if (!media) return 'insecure';
+    if (input.kind === 'loopback' && !media.getDisplayMedia) return 'unsupported';
+    if (input.kind === 'microphone' && !media.getUserMedia) return 'insecure';
+    let stream: MediaStream | null = null;
+    let source: MediaStreamAudioSourceNode | null = null;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      // Resume during the click as well, before a permission picker can consume
+      // activation. Handle rejection immediately while waiting for permission.
+      const resumed = this.resume().then(() => true, () => false);
+      // Tone processing must stay off: echo cancelling and noise suppression eat Morse.
+      const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+      stream = await (input.kind === 'loopback'
+        ? media.getDisplayMedia({ video: true, audio, systemAudio: 'include' } as DisplayMediaStreamOptions)
+        : media.getUserMedia({ audio: { ...audio, ...(input.deviceId ? { deviceId: { exact: input.deviceId } } : {}) }, video: false }));
+      if (request !== this.request) return null;
+      if (!stream.getAudioTracks().length) return 'no-audio';
+      // Only audio enters the graph. Keep the required display track alive so the
+      // browser's Stop sharing control remains valid; no video is read or rendered.
+      source = this.ctx.createMediaStreamSource(new MediaStream(stream.getAudioTracks()));
+      source.connect(this.input);
+      if (!await resumed) return 'failed';
+      if (request !== this.request) return null;
+      if (stream.getAudioTracks().every((track) => track.readyState === 'ended')) return 'missing';
+      this.stream = stream;
+      this.source = source;
+      const captured = stream;
+      for (const track of stream.getTracks()) track.addEventListener('ended', () => {
+        if (this.stream !== captured) return;
+        this.stopInput();
+        this.onInputEnded();
       });
-      this.mic = stream;
-      this.micSource = this.ctx.createMediaStreamSource(stream);
-      this.micSource.connect(this.input);
-      await this.resume();
       return null;
     } catch (error) {
+      if (request !== this.request) return null;
       const name = error instanceof DOMException ? error.name : '';
       if (name === 'NotAllowedError' || name === 'SecurityError') return 'denied';
       if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'missing';
       return 'failed';
+    } finally {
+      // Failed, cancelled or superseded requests must never retain capture access.
+      if (stream && this.stream !== stream) {
+        source?.disconnect();
+        for (const track of stream.getTracks()) track.stop();
+      }
     }
   }
 
-  stopMic(): void {
-    this.micSource?.disconnect();
-    for (const track of this.mic?.getTracks() ?? []) track.stop();
-    this.mic = null;
-    this.micSource = null;
+  stopInput(): void {
+    this.request++;
+    this.source?.disconnect();
+    const stream = this.stream;
+    this.stream = null;
+    this.source = null;
+    for (const track of stream?.getTracks() ?? []) track.stop();
   }
 
   /** White noise into the decoder only, 0…1. */

@@ -42,10 +42,6 @@
     <div class="panel-head">
       <h2 id="receiver-title" class="panel-title" data-i18n="receiver">Receiver</h2>
       <div class="toolbar">
-        <button id="mic" class="button button--primary" type="button" aria-pressed="false">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
-          <span id="mic-label" data-i18n="receiver">Start microphone</span>
-        </button>
         <label class="select-field">
           <span class="select-label" data-i18n="receiver">Filter</span>
           <select id="bandwidth"></select>
@@ -62,13 +58,25 @@
       </div>
     </div>
 
+    <div class="audio-controls">
+      <label class="select-field audio-source-field">
+        <span class="select-label" data-i18n="receiver">Audio source</span>
+        <select id="audio-source" aria-describedby="audio-help"></select>
+      </label>
+      <button id="audio-refresh" class="button" type="button" data-i18n="receiver">Refresh inputs</button>
+      <button id="audio-toggle" class="button button--primary" type="button" aria-pressed="false">
+        <span id="audio-label">Start audio</span>
+      </button>
+    </div>
+    <p id="audio-help" class="hint audio-help"></p>
+
     <div id="scope" class="scope">
       <canvas id="spectrum" class="scope-spectrum"></canvas>
       <canvas id="waterfall" class="scope-waterfall"></canvas>
       <div id="markers" class="scope-markers" aria-hidden="true"></div>
       <div id="cursor" class="scope-cursor" aria-hidden="true" hidden><span id="cursor-label" class="scope-cursor-label"></span></div>
       <div id="scope-empty" class="scope-empty">
-        <p data-i18n="receiver">Start the microphone, or play the generator into the decoder.</p>
+        <p data-i18n="receiver">Start an audio source, or play the generator into the decoder.</p>
       </div>
     </div>
 

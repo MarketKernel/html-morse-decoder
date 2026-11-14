@@ -7,7 +7,7 @@ import { detectLanguage, LANGUAGES, type Language, setLanguage, t, translatePage
 import type { MorseLanguage } from '../core/morse';
 import { Receiver } from '../core/receiver';
 import { BANDWIDTHS, type Bandwidth, parseSettings, type Settings, SPANS, type Span, SQUELCH, STORAGE_KEY, type Theme } from '../core/settings';
-import { AudioEngine, type MicError } from './audio';
+import { AudioEngine, type AudioInput, type InputError } from './audio';
 import { DecoderView } from './decoders';
 import { Generator } from './generator';
 import { Scope } from './scope';
@@ -81,7 +81,7 @@ function applyLanguage(): void {
     settings.span,
   );
   renderSquelch();
-  renderMic();
+  renderInputs();
   for (const view of views) view.retranslate();
   generator.retranslate();
   renderUpdate();
@@ -93,15 +93,20 @@ function applyLanguage(): void {
 let engine: AudioEngine | null = null;
 let receiver: Receiver | null = null;
 
-async function getEngine(): Promise<AudioEngine> {
+function ensureEngine(): AudioEngine {
   if (!engine) {
-    engine = new AudioEngine((samples) => receiver?.push(samples));
+    engine = new AudioEngine((samples) => receiver?.push(samples), renderInputState);
     receiver = new Receiver({ sampleRate: engine.sampleRate, bandwidth: settings.bandwidth, squelch: settings.squelch });
     scope.attach(receiver);
     if (settings.generator.noise > 0) engine.setNoise(settings.generator.noise);
   }
-  await engine.resume();
   return engine;
+}
+
+async function getEngine(): Promise<AudioEngine> {
+  const sound = ensureEngine();
+  await sound.resume();
+  return sound;
 }
 
 /* ---------- Receiver ---------- */
@@ -122,28 +127,98 @@ async function tune(slot: number, frequency: number, snap: boolean): Promise<voi
   refresh();
 }
 
-function renderMic(): void {
-  const on = engine?.micOn ?? false;
-  const button = byId('mic');
+const inputSelect = byId<HTMLSelectElement>('audio-source');
+const inputButton = byId<HTMLButtonElement>('audio-toggle');
+const refreshInputsButton = byId<HTMLButtonElement>('audio-refresh');
+let devices: MediaDeviceInfo[] = [];
+let selectedInput = 'default';
+let inputPending = false;
+let enumeration = 0;
+
+function renderInputState(): void {
+  const on = engine?.inputOn ?? false;
+  const button = inputButton;
   button.setAttribute('aria-pressed', String(on));
-  byId('mic-label').textContent = on ? t('receiver', 'Stop microphone') : t('receiver', 'Start microphone');
+  button.disabled = inputSelect.disabled = inputPending;
+  refreshInputsButton.disabled = inputPending || !navigator.mediaDevices?.enumerateDevices;
+  byId('audio-label').textContent = inputPending ? t('receiver', 'Starting audio…') : on ? t('receiver', 'Stop audio') : t('receiver', 'Start audio');
+  byId('audio-help').textContent = selectedInput === 'loopback'
+    ? t('receiver', 'Choose a tab or screen and enable Share audio. Availability depends on your browser and OS.')
+    : t('receiver', 'Start audio to allow access to all microphones. Virtual loopback inputs also appear here.');
 }
 
-const MIC_ERRORS: Record<MicError, () => string> = {
+function renderInputs(): void {
+  fillSelect(inputSelect, [
+    ['default', t('receiver', 'Default microphone')],
+    ...devices.filter((d) => d.deviceId && d.deviceId !== 'default').map((d, i): [string, string] =>
+      [`device:${d.deviceId}`, d.label || t('receiver', 'Audio input {number}', { number: i + 1 })]),
+    ['loopback', typeof navigator.mediaDevices?.getDisplayMedia === 'function' ? t('receiver', 'Audio loopback (tab / system)') : t('receiver', 'Audio loopback (unavailable in this browser)')],
+  ], selectedInput);
+  const loopback = inputSelect.querySelector<HTMLOptionElement>('option[value="loopback"]');
+  if (loopback) loopback.disabled = !navigator.mediaDevices?.getDisplayMedia;
+  renderInputState();
+}
+
+async function refreshInputs(reportError = false): Promise<void> {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  const request = ++enumeration;
+  try {
+    const available = await navigator.mediaDevices.enumerateDevices();
+    if (request !== enumeration) return;
+    devices = available.filter((device) => device.kind === 'audioinput');
+    if (selectedInput.startsWith('device:') && !devices.some((d) => `device:${d.deviceId}` === selectedInput)) {
+      engine?.stopInput();
+      selectedInput = 'default';
+    }
+    renderInputs();
+  } catch {
+    if (reportError) toast(t('receiver', 'The audio inputs could not be listed'), 'error');
+  }
+}
+
+const INPUT_ERRORS: Record<InputError, () => string> = {
   denied: () => t('receiver', 'The browser was not allowed to use the microphone. Allow it in the site settings and try again.'),
   missing: () => t('receiver', 'No microphone found'),
   insecure: () => t('receiver', 'The microphone works only on https:// or in a file opened from the disk'),
-  failed: () => t('receiver', 'The microphone could not be started'),
+  unsupported: () => t('receiver', 'Audio loopback is not supported in this browser. Select a virtual loopback input instead.'),
+  'no-audio': () => t('receiver', 'No audio was shared. Choose a tab or screen with Share audio enabled, or select a virtual loopback input.'),
+  failed: () => t('receiver', 'The audio source could not be started'),
 };
 
-byId('mic').addEventListener('click', async () => {
-  const sound = await getEngine();
-  if (sound.micOn) sound.stopMic();
-  else {
-    const error = await sound.startMic();
-    if (error) toast(MIC_ERRORS[error](), 'error');
+inputSelect.addEventListener('change', () => {
+  engine?.stopInput();
+  selectedInput = inputSelect.value;
+  renderInputState();
+});
+refreshInputsButton.addEventListener('click', () => void refreshInputs(true));
+navigator.mediaDevices?.addEventListener('devicechange', () => void refreshInputs());
+
+inputButton.addEventListener('click', async () => {
+  if (inputPending) return;
+  try {
+    const sound = ensureEngine();
+    if (sound.inputOn) {
+      sound.stopInput();
+      return;
+    }
+    const input: AudioInput = selectedInput === 'loopback' ? { kind: 'loopback' }
+      : { kind: 'microphone', deviceId: selectedInput.startsWith('device:') ? selectedInput.slice(7) : undefined };
+    inputPending = true;
+    // No await before startInput: the browser's share picker needs this click's activation.
+    const pending = sound.startInput(input);
+    renderInputState();
+    const error = await pending;
+    if (error) {
+      toast(input.kind === 'loopback' && error === 'denied'
+        ? t('receiver', 'Audio sharing was cancelled or denied. Start audio to try again.') : INPUT_ERRORS[error](), 'error');
+    }
+    if (input.kind === 'microphone' && !error) await refreshInputs();
+  } catch {
+    toast(INPUT_ERRORS.failed(), 'error');
+  } finally {
+    inputPending = false;
+    renderInputState();
   }
-  renderMic();
 });
 
 const bandwidthSelect = byId<HTMLSelectElement>('bandwidth');
@@ -291,6 +366,7 @@ byId('update-ready').addEventListener('click', applyUpdate);
 byId('version').textContent = __APP_VERSION__;
 applyTheme();
 applyLanguage();
+void refreshInputs();
 startUpdates(renderUpdate);
 if (justUpdated()) toast(t('update', 'Updated to version {version}.', { version: __APP_VERSION__ }));
 
