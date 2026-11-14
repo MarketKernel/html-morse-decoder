@@ -154,20 +154,90 @@ try {
   // The interface in Russian
   await setField('#ui-language', 'ru', 'change');
   check('heading in russian', await text('#receiver-title'), 'Приёмник');
-  check('mic button in russian', await text('#mic-label'), 'Включить микрофон');
+  check('mic button in russian', await text('#audio-label'), 'Включить звук');
   check('html lang', await evaluate('document.documentElement.lang'), 'ru');
   check('cards translated', await text('.decoder[data-slot="1"] .decoder-empty'), 'Для второго сигнала: Shift+клик по нему или выберите B выше и кликните.');
   check('settings remembered', await until(`JSON.parse(localStorage.getItem('morse-decoder')).language === 'ru'`, 2000), true);
   await setField('#ui-language', 'en', 'change');
 
   // The microphone: Chrome's fake device
-  await click('#mic');
-  check('microphone on', await until(`document.querySelector('#mic').getAttribute('aria-pressed') === 'true'`, 5000), true);
-  check('mic button says stop', await text('#mic-label'), 'Stop microphone');
-  await click('#mic');
-  check('microphone off', await until(`document.querySelector('#mic').getAttribute('aria-pressed') === 'false'`, 2000), true);
+  await click('#audio-toggle');
+  check('microphone on', await until(`document.querySelector('#audio-toggle').getAttribute('aria-pressed') === 'true'`, 5000), true);
+  check('mic button says stop', await text('#audio-label'), 'Stop audio');
+  await click('#audio-toggle');
+  check('microphone off', await until(`document.querySelector('#audio-toggle').getAttribute('aria-pressed') === 'false'`, 2000), true);
+
+  // Choose a real (fake Chrome) input by id, then switch to display audio.
+  const inputId = await evaluate(`[...document.querySelector('#audio-source').options].find((o) => o.value.startsWith('device:'))?.value`);
+  check('microphone choices populated after permission', typeof inputId, 'string');
+  await evaluate(`(() => {
+    window.__getUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (options) => {
+      window.__inputConstraints = options;
+      return window.__micStream = await window.__getUserMedia(options);
+    };
+  })()`);
+  await setField('#audio-source', inputId, 'change');
+  await click('#audio-toggle');
+  check('selected microphone starts', await until(`document.querySelector('#audio-toggle').getAttribute('aria-pressed') === 'true'`), true);
+  check('selected microphone requested by exact id', await evaluate(`window.__inputConstraints.audio.deviceId.exact`), inputId.slice(7));
+  await setField('#audio-source', 'loopback', 'change');
+  check('source change releases microphone', await evaluate(`window.__micStream.getTracks().every((t) => t.readyState === 'ended')`), true);
+  check('source change requires start', await text('#audio-label'), 'Start audio');
+
+  // Synthetic display streams exercise the real Web Audio graph and browser UI
+  // without granting access to the user's actual screen or system audio.
+  await evaluate(`(() => {
+    window.__getDisplayMedia = navigator.mediaDevices.getDisplayMedia;
+    navigator.mediaDevices.getDisplayMedia = async (options) => {
+      window.__displayOptions = options;
+      window.__displayGesture = navigator.userActivation.isActive;
+      window.__loopContext = new AudioContext();
+      const destination = window.__loopContext.createMediaStreamDestination();
+      const tone = window.__loopContext.createOscillator();
+      tone.connect(destination); tone.start();
+      const canvas = document.createElement('canvas');
+      window.__loopStream = new MediaStream([...destination.stream.getAudioTracks(), ...canvas.captureStream().getVideoTracks()]);
+      return window.__loopStream;
+    };
+  })()`);
+  await click('#audio-toggle');
+  check('loopback starts', await until(`document.querySelector('#audio-toggle').getAttribute('aria-pressed') === 'true'`), true);
+  check('display picker retains user gesture', await evaluate(`window.__displayGesture`), true);
+  check('display requests audio', await evaluate(`window.__displayOptions.audio.echoCancellation`), false);
+  await shot('5-loopback');
+  await evaluate(`(() => { const track = window.__loopStream.getAudioTracks()[0]; track.stop(); track.dispatchEvent(new Event('ended')); })()`);
+  check('browser stop resets capture UI', await until(`document.querySelector('#audio-toggle').getAttribute('aria-pressed') === 'false'`), true);
+  check('browser stop releases all tracks', await evaluate(`window.__loopStream.getTracks().every((t) => t.readyState === 'ended')`), true);
+  await evaluate(`window.__loopContext.close()`);
+
+  await evaluate(`navigator.mediaDevices.getDisplayMedia = async () => (window.__videoOnly = document.createElement('canvas').captureStream())`);
+  await click('#audio-toggle');
+  check('sharing without audio gives corrective message', await until(`document.querySelector('#toast').textContent.startsWith('No audio was shared.')`), true);
+  check('sharing without audio stays off', await evaluate(`document.querySelector('#audio-toggle').getAttribute('aria-pressed')`), 'false');
+  check('sharing without audio releases video', await evaluate(`window.__videoOnly.getTracks().every((t) => t.readyState === 'ended')`), true);
+  await evaluate(`navigator.mediaDevices.getDisplayMedia = async () => { throw new DOMException('cancelled', 'NotAllowedError'); }`);
+  await click('#audio-toggle');
+  check('cancelled sharing is explained', await until(`document.querySelector('#toast').textContent.startsWith('Audio sharing was cancelled or denied.')`), true);
+  await evaluate(`navigator.mediaDevices.getDisplayMedia = undefined`);
+  await setField('#ui-language', 'ru', 'change');
+  check('unsupported loopback disabled', await evaluate(`document.querySelector('#audio-source option[value="loopback"]').disabled`), true);
+  check('audio controls translated', await text('#audio-refresh'), 'Обновить входы');
+  await evaluate(`navigator.mediaDevices.getDisplayMedia = window.__getDisplayMedia; navigator.mediaDevices.getUserMedia = window.__getUserMedia`);
+  await setField('#audio-source', 'default', 'change');
+  await setField('#ui-language', 'en', 'change');
+
+  // A long OS device name must fit on a phone, including after devicechange.
+  await evaluate(`(() => {
+    window.__enumerateDevices = navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices);
+    navigator.mediaDevices.enumerateDevices = async () => [...await window.__enumerateDevices(), { kind: 'audioinput', deviceId: 'virtual-cable', label: 'Virtual loopback monitor of USB radio sound card with a very long device name' }];
+    navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+  })()`);
+  check('hotplug refreshes source choices', await until(`document.querySelector('#audio-source option[value="device:virtual-cable"]') !== null`), true);
+  await setField('#audio-source', 'device:virtual-cable', 'change');
 
   // Dark theme
+  await evaluate(`document.querySelector('#toast').hidden = true`);
   await setField('#theme', 'dark', 'change');
   check('dark theme', await evaluate('document.documentElement.dataset.theme'), 'dark');
   await shot('3-dark');
@@ -178,6 +248,10 @@ try {
   await sleep(300);
   check('phone: no sideways scroll', await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
   await shot('4-phone');
+  await setField('#ui-language', 'ru', 'change');
+  check('phone: Russian audio controls fit', await evaluate('document.documentElement.scrollWidth <= window.innerWidth'), true);
+  await shot('6-phone-ru');
+  await setField('#ui-language', 'en', 'change');
   await send('Emulation.clearDeviceMetricsOverride');
   check('no errors on the page', errors, []);
 
